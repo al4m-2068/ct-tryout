@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
-import { examInfo, questions } from "../data/questions.js";
+import { getExam } from "../services/examService.js";
 import {
   STATUS_IDLE,
   STATUS_ANSWERING,
@@ -8,6 +8,17 @@ import {
 } from "./examSessionStatus.js";
 
 const ExamSessionContext = createContext(null);
+
+/**
+ * Default exam code used to derive localStorage keys before the exam has been
+ * loaded. This value must remain stable so that localStorage data created
+ * under one version is readable under the next.
+ *
+ * When the real backend is integrated, the exam code will come from the
+ * server response. This constant is the safe fallback for the mock layer.
+ */
+const FALLBACK_EXAM_CODE = "MTK-101";
+
 const makeAnswersKey  = (code) => `eduos.cbt.exam.${code}.answers`;
 const makeSessionKey  = (code) => `eduos.cbt.exam.${code}.session`;
 
@@ -64,26 +75,48 @@ function persistSession(code, session) {
 }
 
 function ExamSessionProvider({ children }) {
-  const [exam] = useState(examInfo);
-  const [questionsList] = useState(questions);
+  const [exam, setExam] = useState(null);
+  const [questionsList, setQuestions] = useState(null);
+  const [loadedExamCode, setLoadedExamCode] = useState(FALLBACK_EXAM_CODE);
+
   const [answers, setAnswers] = useState(() =>
-    loadPersistedAnswers(examInfo.code)
+    loadPersistedAnswers(loadedExamCode)
   );
 
   const [sessionMeta, setSessionMeta] = useState(() =>
-    loadPersistedSession(examInfo.code)
+    loadPersistedSession(loadedExamCode)
   );
 
+  useEffect(() => {
+    let cancelled = false;
+
+    getExam(FALLBACK_EXAM_CODE)
+      .then(({ exam: loadedExam, questions: loadedQuestions }) => {
+        if (cancelled) return;
+        setExam(loadedExam);
+        setQuestions(loadedQuestions);
+        setLoadedExamCode(loadedExam.code);
+      })
+      .catch(() => {
+
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const status = sessionMeta ? sessionMeta.status : STATUS_IDLE;
+
   const submitAnswer = useCallback(
     (questionId, optionKey) => {
       setAnswers((prev) => {
         const next = { ...prev, [questionId]: optionKey };
-        persistAnswers(examInfo.code, next);
+        persistAnswers(loadedExamCode, next);
         return next;
       });
     },
-    []
+    [loadedExamCode]
   );
 
   const startSession = useCallback(() => {
@@ -94,28 +127,28 @@ function ExamSessionProvider({ children }) {
         startedAt: new Date().toISOString(),
         status: STATUS_ANSWERING,
       };
-      persistSession(examInfo.code, next);
+      persistSession(loadedExamCode, next);
       return next;
     });
-  }, []);
+  }, [loadedExamCode]);
 
   const beginFinalizing = useCallback(() => {
     setSessionMeta((prev) => {
       if (!prev) return prev;
       const next = { ...prev, status: STATUS_FINALIZING };
-      persistSession(examInfo.code, next);
+      persistSession(loadedExamCode, next);
       return next;
     });
-  }, []);
+  }, [loadedExamCode]);
 
   const markDone = useCallback(() => {
     setSessionMeta((prev) => {
       if (!prev) return prev;
       const next = { ...prev, status: STATUS_DONE };
-      persistSession(examInfo.code, next);
+      persistSession(loadedExamCode, next);
       return next;
     });
-  }, []);
+  }, [loadedExamCode]);
 
   const value = useMemo(
     () => ({
