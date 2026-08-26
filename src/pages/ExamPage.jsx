@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { questions, examInfo } from "../data/questions.js";
+import { useExamSession } from "../contexts/ExamSessionContext.jsx";
 import TimerRing from "../components/TimerRing.jsx";
 import "../components/TimerRing.css";
 import "./ExamPage.css";
@@ -9,35 +9,38 @@ const SUBMIT_COUNTDOWN_SECONDS = 5;
 
 function ExamPage() {
   const navigate = useNavigate();
+  const {
+    exam,
+    questions,
+    answers,
+    status: sessionStatus,
+    submitAnswer,
+    beginFinalizing,
+    markDone,
+  } = useExamSession();
+
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [answers, setAnswers] = useState({});
   const [confirmOpen, setConfirmOpen] = useState(false);
-
-  // status: "answering" | "finalizing" | "done"
-  const [status, setStatus] = useState("answering");
   const [countdown, setCountdown] = useState(SUBMIT_COUNTDOWN_SECONDS);
-
   const question = questions[currentIndex];
   const answeredCount = Object.keys(answers).length;
   const isLast = currentIndex === questions.length - 1;
   const isFirst = currentIndex === 0;
 
-  // Timer itung mundur yang jalan SETELAH user submit (bukan selama
-  // ngerjain soal) -- selama "finalizing" ini, jawaban lagi "dikunci".
   useEffect(() => {
-    if (status !== "finalizing") return undefined;
+    if (sessionStatus !== "finalizing") return undefined;
 
     if (countdown <= 0) {
-      setStatus("done");
+      markDone();
       return undefined;
     }
 
     const id = setTimeout(() => setCountdown((c) => c - 1), 1000);
     return () => clearTimeout(id);
-  }, [status, countdown]);
+  }, [sessionStatus, countdown, markDone]);
 
   function selectAnswer(key) {
-    setAnswers((prev) => ({ ...prev, [question.id]: key }));
+    submitAnswer(question.id, key);
   }
 
   function goPrev() {
@@ -55,15 +58,15 @@ function ExamPage() {
   function confirmSubmit() {
     setConfirmOpen(false);
     setCountdown(SUBMIT_COUNTDOWN_SECONDS);
-    setStatus("finalizing");
+    beginFinalizing();
   }
 
   const unanswered = useMemo(
     () => questions.filter((q) => !answers[q.id]),
-    [answers]
+    [answers, questions]
   );
 
-  if (status === "finalizing") {
+  if (sessionStatus === "finalizing") {
     return (
       <div className="exam exam--center">
         <div className="finalize">
@@ -83,7 +86,7 @@ function ExamPage() {
     );
   }
 
-  if (status === "done") {
+  if (sessionStatus === "done") {
     return (
       <div className="exam exam--center">
         <div className="finalize">
@@ -108,8 +111,8 @@ function ExamPage() {
     <div className="exam">
       <header className="exam__header">
         <div>
-          <span className="exam__eyebrow">{examInfo.code}</span>
-          <h1 className="exam__title">{examInfo.title}</h1>
+          <span className="exam__eyebrow">{exam.code}</span>
+          <h1 className="exam__title">{exam.title}</h1>
         </div>
         <div className="exam__progressPill">
           Soal {currentIndex + 1} / {questions.length}

@@ -1,9 +1,10 @@
 import { useNavigate } from "react-router-dom";
-import { examInfo } from "../data/questions.js";
+import { useExamSession } from "../contexts/ExamSessionContext.jsx";
 import "./Dashboard.css";
 
 function Dashboard() {
   const navigate = useNavigate();
+  const { exam } = useExamSession();
 
   return (
     <div className="dash">
@@ -12,21 +13,21 @@ function Dashboard() {
       <div className="dash__ticket">
         <div className="dash__ticketTop">
           <span className="dash__eyebrow">Kartu Ujian</span>
-          <span className="dash__code">{examInfo.code}</span>
+          <span className="dash__code">{exam.code}</span>
         </div>
 
-        <h1 className="dash__title">{examInfo.title}</h1>
+        <h1 className="dash__title">{exam.title}</h1>
 
         <div className="dash__perforation" aria-hidden="true" />
 
         <dl className="dash__meta">
           <div className="dash__metaRow">
             <dt>Jumlah Soal</dt>
-            <dd>{examInfo.totalQuestions} butir</dd>
+            <dd>{exam.totalQuestions} butir</dd>
           </div>
           <div className="dash__metaRow">
             <dt>Waktu</dt>
-            <dd>{examInfo.durationMinutes} menit</dd>
+            <dd>{exam.durationMinutes} menit</dd>
           </div>
           <div className="dash__metaRow">
             <dt>Tipe Soal</dt>

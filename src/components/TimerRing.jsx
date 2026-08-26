@@ -9,7 +9,6 @@ function formatTime(totalSeconds) {
   return `${mm}:${ss}`;
 }
 
-// Ring countdown: chalk-drawn circle yang "terhapus" seiring waktu berjalan.
 function TimerRing({ secondsLeft, totalSeconds, size = 84, danger = false }) {
   const radius = (size - 10) / 2;
   const circumference = 2 * Math.PI * radius;

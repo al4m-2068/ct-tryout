@@ -1,4 +1,3 @@
-// Contoh data soal. Ganti/isi sesuai kebutuhan, atau fetch dari API.
 export const examInfo = {
   title: "Ujian Matematika Dasar",
   code: "MTK-101",
