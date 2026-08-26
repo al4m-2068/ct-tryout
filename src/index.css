@@ -1,0 +1,61 @@
+@import url("https://fonts.googleapis.com/css2?family=Special+Elite&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap");
+
+:root {
+  --board-900: #16241c;
+  --board-800: #1f3a2e;
+  --board-700: #2c4a3b;
+  --board-600: #3a5c4a;
+  --chalk: #f1efe3;
+  --chalk-dim: #b9c4bb;
+  --chalk-yellow: #e8c468;
+  --danger: #d9645a;
+  --danger-dim: #7a3530;
+
+  --font-display: "Special Elite", "Courier New", monospace;
+  --font-body: "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", "Courier New", monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--board-900);
+  background-image: radial-gradient(
+      ellipse at 20% 10%,
+      rgba(255, 255, 255, 0.03),
+      transparent 55%
+    ),
+    radial-gradient(ellipse at 80% 90%, rgba(255, 255, 255, 0.025), transparent 55%);
+  color: var(--chalk);
+  font-family: var(--font-body);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+button {
+  font-family: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--chalk-yellow);
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}

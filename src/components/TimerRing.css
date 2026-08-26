@@ -1,0 +1,31 @@
+.timerRing {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.timerRing__track {
+  stroke: var(--board-600);
+}
+
+.timerRing__progress {
+  stroke: var(--chalk-yellow);
+  transition: stroke-dashoffset 1s linear, stroke 0.3s ease;
+}
+
+.timerRing--danger .timerRing__progress {
+  stroke: var(--danger);
+}
+
+.timerRing__label {
+  position: absolute;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--chalk);
+}
+
+.timerRing--danger .timerRing__label {
+  color: var(--danger);
+}
