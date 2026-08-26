@@ -4,7 +4,7 @@ import "./Dashboard.css";
 
 function Dashboard() {
   const navigate = useNavigate();
-  const { exam } = useExamSession();
+  const { exam, startSession } = useExamSession();
 
   return (
     <div className="dash">
@@ -44,7 +44,7 @@ function Dashboard() {
         <button
           type="button"
           className="dash__start"
-          onClick={() => navigate("/exam")}
+          onClick={() => { startSession(); navigate("/exam"); }}
         >
           Mulai Ujian
         </button>

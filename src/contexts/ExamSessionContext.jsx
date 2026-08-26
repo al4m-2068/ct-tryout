@@ -7,11 +7,12 @@ import {
 } from "./examSessionStatus.js";
 
 const ExamSessionContext = createContext(null);
-const makeStorageKey = (code) => `eduos.cbt.exam.${code}.answers`;
+const makeAnswersKey  = (code) => `eduos.cbt.exam.${code}.answers`;
+const makeSessionKey  = (code) => `eduos.cbt.exam.${code}.session`;
 
 function loadPersistedAnswers(code) {
   try {
-    const raw = localStorage.getItem(makeStorageKey(code));
+    const raw = localStorage.getItem(makeAnswersKey(code));
     if (raw === null) return {};
     const parsed = JSON.parse(raw);
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
@@ -25,7 +26,37 @@ function loadPersistedAnswers(code) {
 
 function persistAnswers(code, answers) {
   try {
-    localStorage.setItem(makeStorageKey(code), JSON.stringify(answers));
+    localStorage.setItem(makeAnswersKey(code), JSON.stringify(answers));
+  } catch {
+
+  }
+}
+
+function loadPersistedSession(code) {
+  try {
+    const raw = localStorage.getItem(makeSessionKey(code));
+    if (raw === null) return null;
+    const parsed = JSON.parse(raw);
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed) ||
+      typeof parsed.sessionId !== "string" ||
+      parsed.sessionId === "" ||
+      typeof parsed.startedAt !== "string" ||
+      typeof parsed.status !== "string"
+    ) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function persistSession(code, session) {
+  try {
+    localStorage.setItem(makeSessionKey(code), JSON.stringify(session));
   } catch {
 
   }
@@ -38,7 +69,11 @@ function ExamSessionProvider({ children }) {
     loadPersistedAnswers(examInfo.code)
   );
 
-  const [status, setStatus] = useState(STATUS_ANSWERING);
+  const [sessionMeta, setSessionMeta] = useState(() =>
+    loadPersistedSession(examInfo.code)
+  );
+
+  const status = sessionMeta ? sessionMeta.status : STATUS_ANSWERING;
   const submitAnswer = useCallback(
     (questionId, optionKey) => {
       setAnswers((prev) => {
@@ -50,12 +85,37 @@ function ExamSessionProvider({ children }) {
     []
   );
 
+  const startSession = useCallback(() => {
+    setSessionMeta((prev) => {
+      if (prev !== null && prev.status !== STATUS_DONE) {
+        return prev;
+      }
+      const next = {
+        sessionId: crypto.randomUUID(),
+        startedAt: new Date().toISOString(),
+        status: STATUS_ANSWERING,
+      };
+      persistSession(examInfo.code, next);
+      return next;
+    });
+  }, []);
+
   const beginFinalizing = useCallback(() => {
-    setStatus(STATUS_FINALIZING);
+    setSessionMeta((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev, status: STATUS_FINALIZING };
+      persistSession(examInfo.code, next);
+      return next;
+    });
   }, []);
 
   const markDone = useCallback(() => {
-    setStatus(STATUS_DONE);
+    setSessionMeta((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev, status: STATUS_DONE };
+      persistSession(examInfo.code, next);
+      return next;
+    });
   }, []);
 
   const value = useMemo(
@@ -63,12 +123,15 @@ function ExamSessionProvider({ children }) {
       exam,
       questions: questionsList,
       answers,
+      sessionId: sessionMeta ? sessionMeta.sessionId : null,
+      startedAt:  sessionMeta ? sessionMeta.startedAt  : null,
       status,
       submitAnswer,
+      startSession,
       beginFinalizing,
       markDone,
     }),
-    [exam, questionsList, answers, status, submitAnswer, beginFinalizing, markDone]
+    [exam, questionsList, answers, sessionMeta, status, submitAnswer, startSession, beginFinalizing, markDone]
   );
 
   return (
