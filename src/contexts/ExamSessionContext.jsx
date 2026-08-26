@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
 import { examInfo, questions } from "../data/questions.js";
 import {
+  STATUS_IDLE,
   STATUS_ANSWERING,
   STATUS_FINALIZING,
   STATUS_DONE,
@@ -73,7 +74,7 @@ function ExamSessionProvider({ children }) {
     loadPersistedSession(examInfo.code)
   );
 
-  const status = sessionMeta ? sessionMeta.status : STATUS_ANSWERING;
+  const status = sessionMeta ? sessionMeta.status : STATUS_IDLE;
   const submitAnswer = useCallback(
     (questionId, optionKey) => {
       setAnswers((prev) => {
@@ -87,9 +88,7 @@ function ExamSessionProvider({ children }) {
 
   const startSession = useCallback(() => {
     setSessionMeta((prev) => {
-      if (prev !== null && prev.status !== STATUS_DONE) {
-        return prev;
-      }
+      if (prev !== null) return prev;
       const next = {
         sessionId: crypto.randomUUID(),
         startedAt: new Date().toISOString(),
