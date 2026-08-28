@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useExamSession } from "../contexts/ExamSessionContext.jsx";
 import "./Dashboard.css";
@@ -5,6 +6,7 @@ import "./Dashboard.css";
 function Dashboard() {
   const navigate = useNavigate();
   const { exam, startSession } = useExamSession();
+  const [startError, setStartError] = useState(null);
 
   if (!exam) {
     return (
@@ -17,6 +19,23 @@ function Dashboard() {
         </div>
       </div>
     );
+  }
+
+  async function handleStart() {
+    setStartError(null);
+    try {
+      const sessionUuid = crypto.randomUUID();
+      await startSession(sessionUuid);
+      navigate("/exam");
+    } catch (err) {
+      if (err.status === 409) {
+        setStartError(
+          "Kamu sudah memiliki sesi ujian untuk ujian ini. Hanya satu kali attempt yang diizinkan."
+        );
+      } else {
+        setStartError("Gagal memulai ujian. Pastikan koneksi internet stabil dan coba lagi.");
+      }
+    }
   }
 
   return (
@@ -57,11 +76,17 @@ function Dashboard() {
         <button
           type="button"
           className="dash__start"
-          onClick={() => { startSession(); navigate("/exam"); }}
+          onClick={handleStart}
         >
           Mulai Ujian
         </button>
       </div>
+
+      {startError && (
+        <p className="dash__error" role="alert">
+          {startError}
+        </p>
+      )}
 
       <p className="dash__foot">Pastikan koneksi internet stabil sebelum memulai.</p>
     </div>

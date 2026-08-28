@@ -13,30 +13,34 @@ function normaliseOptions(raw) {
   return [];
 }
 
-/**
- *
- *
- * @param {string} examCode
- * @returns {Promise<{ exam: object, questions: object[] }>}
- */
 export async function getExam(examCode) {
   const res = await fetch(`${API_BASE}/exams/${encodeURIComponent(examCode)}`);
-
   if (!res.ok) {
     throw new Error(`Failed to fetch exam "${examCode}": HTTP ${res.status}`);
   }
-
   const raw = await res.json();
-  const data =
-    raw && typeof raw === "object" && "data" in raw ? raw.data : raw;
-
+  const data = raw && typeof raw === "object" && "data" in raw ? raw.data : raw;
   const questions = (data.questions || []).map((q) => ({
     ...q,
     options: normaliseOptions(q.options),
   }));
+  return { exam: data.exam || {}, questions };
+}
 
-  return {
-    exam: data.exam || {},
-    questions,
-  };
+export async function createSession({ studentId, examCode, sessionUuid }) {
+  const res = await fetch(`${API_BASE}/exam-sessions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ studentId, examCode, sessionUuid }),
+  });
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`;
+    try {
+      const body = await res.json();
+      if (body && body.message) message = body.message;
+    } catch {}
+    throw Object.assign(new Error(message), { status: res.status });
+  }
+  const raw = await res.json();
+  return raw.data || raw;
 }

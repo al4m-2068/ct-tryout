@@ -1,26 +1,14 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { getExam } from "../services/examService.js";
-import {
-  STATUS_IDLE,
-  STATUS_ANSWERING,
-  STATUS_FINALIZING,
-  STATUS_DONE,
-} from "./examSessionStatus.js";
+import { getExam, createSession } from "../services/examService.js";
+import { STATUS_IDLE, STATUS_FINALIZING, STATUS_DONE } from "./examSessionStatus.js";
 
 const ExamSessionContext = createContext(null);
 
-/**
- * Default exam code used to derive localStorage keys before the exam has been
- * loaded. This value must remain stable so that localStorage data created
- * under one version is readable under the next.
- *
- * When the real backend is integrated, the exam code will come from the
- * server response. This constant is the safe fallback for the mock layer.
- */
 const FALLBACK_EXAM_CODE = "MTK-101";
+const DEV_STUDENT_ID = 1;
 
 const makeAnswersKey  = (code) => `eduos.cbt.exam.${code}.answers`;
-const makeSessionKey  = (code) => `eduos.cbt.exam.${code}.session`;
+const makeSessionKey = (code) => `eduos.cbt.exam.${code}.session`;
 
 function loadPersistedAnswers(code) {
   try {
@@ -39,9 +27,7 @@ function loadPersistedAnswers(code) {
 function persistAnswers(code, answers) {
   try {
     localStorage.setItem(makeAnswersKey(code), JSON.stringify(answers));
-  } catch {
-
-  }
+  } catch {}
 }
 
 function loadPersistedSession(code) {
@@ -69,27 +55,18 @@ function loadPersistedSession(code) {
 function persistSession(code, session) {
   try {
     localStorage.setItem(makeSessionKey(code), JSON.stringify(session));
-  } catch {
-
-  }
+  } catch {}
 }
 
 function ExamSessionProvider({ children }) {
   const [exam, setExam] = useState(null);
   const [questionsList, setQuestions] = useState(null);
   const [loadedExamCode, setLoadedExamCode] = useState(FALLBACK_EXAM_CODE);
-
-  const [answers, setAnswers] = useState(() =>
-    loadPersistedAnswers(loadedExamCode)
-  );
-
-  const [sessionMeta, setSessionMeta] = useState(() =>
-    loadPersistedSession(loadedExamCode)
-  );
+  const [answers, setAnswers] = useState(() => loadPersistedAnswers(loadedExamCode));
+  const [sessionMeta, setSessionMeta] = useState(() => loadPersistedSession(loadedExamCode));
 
   useEffect(() => {
     let cancelled = false;
-
     getExam(FALLBACK_EXAM_CODE)
       .then(({ exam: loadedExam, questions: loadedQuestions }) => {
         if (cancelled) return;
@@ -97,40 +74,39 @@ function ExamSessionProvider({ children }) {
         setQuestions(loadedQuestions);
         setLoadedExamCode(loadedExam.code);
       })
-      .catch(() => {
-
-      });
-
-    return () => {
-      cancelled = true;
-    };
+      .catch(() => {});
+    return () => { cancelled = true; };
   }, []);
 
   const status = sessionMeta ? sessionMeta.status : STATUS_IDLE;
 
-  const submitAnswer = useCallback(
-    (questionId, optionKey) => {
-      setAnswers((prev) => {
-        const next = { ...prev, [questionId]: optionKey };
-        persistAnswers(loadedExamCode, next);
-        return next;
-      });
-    },
-    [loadedExamCode]
-  );
-
-  const startSession = useCallback(() => {
-    setSessionMeta((prev) => {
-      if (prev !== null) return prev;
-      const next = {
-        sessionId: crypto.randomUUID(),
-        startedAt: new Date().toISOString(),
-        status: STATUS_ANSWERING,
-      };
-      persistSession(loadedExamCode, next);
+  const submitAnswer = useCallback((questionId, optionKey) => {
+    setAnswers((prev) => {
+      const next = { ...prev, [questionId]: optionKey };
+      persistAnswers(loadedExamCode, next);
       return next;
     });
   }, [loadedExamCode]);
+
+  const applySession = useCallback((backendSession) => {
+    const next = {
+      sessionId: backendSession.sessionUuid,
+      startedAt: backendSession.startedAt,
+      status: backendSession.status,
+    };
+    setSessionMeta(next);
+    persistSession(loadedExamCode, next);
+  }, [loadedExamCode]);
+
+  const startSession = useCallback(async (sessionUuid) => {
+    const backendSession = await createSession({
+      studentId: DEV_STUDENT_ID,
+      examCode: FALLBACK_EXAM_CODE,
+      sessionUuid,
+    });
+    applySession(backendSession);
+    return backendSession;
+  }, [applySession]);
 
   const beginFinalizing = useCallback(() => {
     setSessionMeta((prev) => {
@@ -156,7 +132,7 @@ function ExamSessionProvider({ children }) {
       questions: questionsList,
       answers,
       sessionId: sessionMeta ? sessionMeta.sessionId : null,
-      startedAt:  sessionMeta ? sessionMeta.startedAt  : null,
+      startedAt: sessionMeta ? sessionMeta.startedAt : null,
       status,
       submitAnswer,
       startSession,
@@ -176,9 +152,7 @@ function ExamSessionProvider({ children }) {
 function useExamSession() {
   const ctx = useContext(ExamSessionContext);
   if (!ctx) {
-    throw new Error(
-      "useExamSession must be used within <ExamSessionProvider>"
-    );
+    throw new Error("useExamSession must be used within <ExamSessionProvider>");
   }
   return ctx;
 }

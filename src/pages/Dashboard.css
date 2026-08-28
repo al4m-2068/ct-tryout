@@ -146,3 +146,14 @@
   color: var(--chalk-dim);
   opacity: 0.8;
 }
+
+.dash__error {
+  margin-top: 12px;
+  padding: 10px 16px;
+  background: rgba(217, 100, 90, 0.15);
+  border: 1px solid var(--danger);
+  border-radius: 4px;
+  color: var(--danger);
+  font-size: 13px;
+  text-align: center;
+}
