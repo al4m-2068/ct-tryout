@@ -66,6 +66,16 @@ function ExamPage() {
     [answers, questions]
   );
 
+  if (!questions) {
+    return (
+      <div className="exam exam--center">
+        <p style={{ padding: "2rem", textAlign: "center" }}>
+          Memuat soal…
+        </p>
+      </div>
+    );
+  }
+
   if (sessionStatus === "finalizing") {
     return (
       <div className="exam exam--center">

@@ -6,6 +6,19 @@ function Dashboard() {
   const navigate = useNavigate();
   const { exam, startSession } = useExamSession();
 
+  if (!exam) {
+    return (
+      <div className="dash">
+        <div className="dash__hall">EXAM HALL</div>
+        <div className="dash__ticket">
+          <p style={{ padding: "1rem", textAlign: "center" }}>
+            Memuat data ujian…
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="dash">
       <div className="dash__hall">EXAM HALL</div>
