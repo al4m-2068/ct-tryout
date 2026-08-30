@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { getExam, createSession, saveAnswer } from "../services/examService.js";
+import { getExam, createSession, saveAnswer, submitExam } from "../services/examService.js";
 import { STATUS_IDLE, STATUS_FINALIZING, STATUS_DONE } from "./examSessionStatus.js";
 
 const ExamSessionContext = createContext(null);
@@ -91,6 +91,7 @@ function ExamSessionProvider({ children }) {
   const [answers, setAnswers] = useState(() => loadPersistedAnswers(loadedExamCode));
   const [sessionMeta, setSessionMeta] = useState(() => loadPersistedSession(loadedExamCode));
   const [pending, setPending] = useState([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const sessionIdRef = useRef(null);
   const statusRef = useRef(STATUS_IDLE);
   const isSyncingRef = useRef(false);
@@ -252,6 +253,32 @@ function ExamSessionProvider({ children }) {
     });
   }, [loadedExamCode]);
 
+  /**
+   * Orchestrates the full final submission flow:
+   * 1. Flush any remaining pending answers to the backend.
+   * 2. Call POST /api/exam-sessions/:sessionUuid/submit.
+   * 3. On success: transition to finalizing state (countdown → done).
+   * 4. On HTTP 409 (already submitted): re-throw so callers can show the conflict.
+   * 5. On any other failure: re-throw so callers can show the error.
+   *
+   * Must NOT be called while isSubmitting is true (concurrent guard).
+   */
+  const finaliseExam = useCallback(async () => {
+    if (isSubmitting) return;
+    if (statusRef.current !== "answering") return;
+
+    const sessionUuid = sessionIdRef.current;
+    if (!sessionUuid) return;
+
+    setIsSubmitting(true);
+    try {
+      await syncPendingAnswers();
+      await submitExam(sessionUuid);
+      beginFinalizing();
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, []);
   const value = useMemo(
     () => ({
       exam,
@@ -261,12 +288,14 @@ function ExamSessionProvider({ children }) {
       startedAt: sessionMeta ? sessionMeta.startedAt : null,
       status,
       submitAnswer,
+      finaliseExam,
+      isSubmitting,
       startSession,
       beginFinalizing,
       markDone,
       pendingCount: pending.length,
     }),
-    [exam, questionsList, answers, sessionMeta, status, submitAnswer, startSession, beginFinalizing, markDone, pending]
+    [exam, questionsList, answers, sessionMeta, status, submitAnswer, finaliseExam, isSubmitting, startSession, beginFinalizing, markDone, pending]
   );
 
   return (

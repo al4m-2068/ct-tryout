@@ -16,6 +16,8 @@ function ExamPage() {
     status: sessionStatus,
     startedAt,
     submitAnswer,
+    finaliseExam,
+    isSubmitting,
     beginFinalizing,
     markDone,
   } = useExamSession();
@@ -24,6 +26,7 @@ function ExamPage() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [countdown, setCountdown] = useState(SUBMIT_COUNTDOWN_SECONDS);
   const [remainingSeconds, setRemainingSeconds] = useState(0);
+  const [submitError, setSubmitError] = useState(null);
   const hasExpiredRef = useRef(false);
   const intervalRef = useRef(null);
   const deadlineMs =
@@ -66,12 +69,12 @@ function ExamPage() {
     return () => clearTimeout(id);
   }, [sessionStatus, countdown, markDone]);
 
-  const question = questions[currentIndex];
+  const question = questions?.[currentIndex];
   const answeredCount = Object.keys(answers).length;
-  const isLast = currentIndex === questions.length - 1;
+  const isLast = currentIndex === (questions?.length ?? 0) - 1;
   const isFirst = currentIndex === 0;
   const unanswered = useMemo(
-    () => questions.filter((q) => !answers[q.id]),
+    () => (questions ?? []).filter((q) => !answers[q.id]),
     [answers, questions]
   );
 
@@ -89,8 +92,15 @@ function ExamPage() {
 
   function confirmSubmit() {
     setConfirmOpen(false);
+    setSubmitError(null);
     setCountdown(SUBMIT_COUNTDOWN_SECONDS);
-    beginFinalizing();
+    finaliseExam().catch((err) => {
+      if (err.status === 409) {
+        setSubmitError("Ujian sudah pernah disubmit. Tidak bisa submit ulang.");
+      } else {
+        setSubmitError("Submit gagal. Jawaban tetap tersimpan secara lokal. Periksa koneksi dan coba lagi.");
+      }
+    });
   }
 
   if (!questions) {
@@ -103,34 +113,17 @@ function ExamPage() {
     );
   }
 
-  if (sessionStatus === "finalizing") {
-    return (
-      <div className="exam exam--center">
-        <div className="finalize">
-          <span className="finalize__eyebrow">Jawaban terkunci</span>
-          <h1 className="finalize__title">Ujian sedang difinalisasi</h1>
-          <TimerRing
-            secondsLeft={countdown}
-            totalSeconds={SUBMIT_COUNTDOWN_SECONDS}
-            size={110}
-            danger={countdown <= 2}
-          />
-          <p className="finalize__note">
-            Mohon tunggu, hasil akan tampil otomatis.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
   if (sessionStatus === "done") {
     return (
       <div className="exam exam--center">
         <div className="finalize">
           <span className="finalize__eyebrow">Selesai</span>
-          <h1 className="finalize__title">Jawaban kamu sudah tersimpan</h1>
+          <h1 className="finalize__title">Ujian Selesai</h1>
           <p className="finalize__note">
-            {answeredCount} dari {questions.length} soal terjawab.
+            Terima kasih telah mengikuti ujian ini.
+          </p>
+          <p className="finalize__note">
+            {answeredCount} dari {questions?.length ?? "?"} soal terjawab.
           </p>
           <button
             type="button"
@@ -139,6 +132,41 @@ function ExamPage() {
           >
             Kembali ke Dashboard
           </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (sessionStatus === "finalizing") {
+    return (
+      <div className="exam exam--center">
+        <div className="finalize">
+          <span className="finalize__eyebrow">Jawaban terkunci</span>
+          <h1 className="finalize__title">
+            {submitError ? "Submit Gagal" : "Ujian sedang difinalisasi"}
+          </h1>
+          {!submitError && (
+            <TimerRing
+              secondsLeft={countdown}
+              totalSeconds={SUBMIT_COUNTDOWN_SECONDS}
+              size={110}
+              danger={countdown <= 2}
+            />
+          )}
+          <p className="finalize__note">
+            {submitError
+              ? submitError
+              : "Mohon tunggu, hasil akan tampil otomatis."}
+          </p>
+          {submitError && (
+            <button
+              type="button"
+              className="finalize__back"
+              onClick={() => setSubmitError(null)}
+            >
+              Kembali ke Soal
+            </button>
+          )}
         </div>
       </div>
     );
@@ -153,7 +181,7 @@ function ExamPage() {
         </div>
         <div className="exam__headerRight">
           <div className="exam__progressPill">
-            Soal {currentIndex + 1} / {questions.length}
+            Soal {currentIndex + 1} / {questions?.length ?? "?"}
           </div>
           {sessionStatus === "answering" && remainingSeconds > 0 && (
             <div
@@ -171,7 +199,7 @@ function ExamPage() {
       </header>
 
       <nav className="exam__dots" aria-label="Navigasi soal">
-        {questions.map((q, i) => {
+        {(questions ?? []).map((q, i) => {
           const state =
             i === currentIndex
               ? "current"
@@ -265,6 +293,7 @@ function ExamPage() {
                 type="button"
                 className="navBtn"
                 onClick={() => setConfirmOpen(false)}
+                disabled={isSubmitting}
               >
                 Cek Lagi
               </button>
@@ -272,8 +301,9 @@ function ExamPage() {
                 type="button"
                 className="submitBtn"
                 onClick={confirmSubmit}
+                disabled={isSubmitting}
               >
-                Ya, Submit
+                {isSubmitting ? "Menyimpan..." : "Ya, Submit"}
               </button>
             </div>
           </div>

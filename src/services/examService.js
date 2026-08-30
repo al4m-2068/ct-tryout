@@ -63,6 +63,24 @@ export async function saveAnswer(sessionUuid, questionId, selectedOption) {
   return res.json();
 }
 
+export async function submitExam(sessionUuid) {
+  const res = await fetch(
+    `${API_BASE}/exam-sessions/${encodeURIComponent(sessionUuid)}/submit`,
+    { method: "POST" }
+  );
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`;
+    try {
+      const body = await res.json();
+      if (body && body.message) message = body.message;
+    } catch {}
+    const err = Object.assign(new Error(message), { status: res.status });
+    if (res.status === 409) err.conflict = true;
+    throw err;
+  }
+  return res.json();
+}
+
 export async function createSession({ studentId, examCode, sessionUuid }) {
   const res = await fetch(`${API_BASE}/exam-sessions`, {
     method: "POST",
