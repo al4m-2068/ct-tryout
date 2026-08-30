@@ -20,7 +20,6 @@ function normaliseOptions(raw) {
       return [];
     }
   }
-
   if (raw && typeof raw === "object" && !Array.isArray(raw)) {
     const CANONICAL_KEYS = ["A", "B", "C", "D"];
     return CANONICAL_KEYS.filter((key) => key in raw).map((key) => ({
@@ -59,24 +58,6 @@ export async function saveAnswer(sessionUuid, questionId, selectedOption) {
       if (body && body.message) message = body.message;
     } catch {}
     throw Object.assign(new Error(message), { status: res.status });
-  }
-  return res.json();
-}
-
-export async function submitExam(sessionUuid) {
-  const res = await fetch(
-    `${API_BASE}/exam-sessions/${encodeURIComponent(sessionUuid)}/submit`,
-    { method: "POST" }
-  );
-  if (!res.ok) {
-    let message = `HTTP ${res.status}`;
-    try {
-      const body = await res.json();
-      if (body && body.message) message = body.message;
-    } catch {}
-    const err = Object.assign(new Error(message), { status: res.status });
-    if (res.status === 409) err.conflict = true;
-    throw err;
   }
   return res.json();
 }

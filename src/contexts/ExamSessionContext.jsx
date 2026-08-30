@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { getExam, createSession, saveAnswer, submitExam } from "../services/examService.js";
-import { cacheExam, getCachedExam, saveAnswerToDb } from "../db/idb.js";
+import { cacheExam, getCachedExam, saveAnswerToDb, getUnsyncedAnswers, markAnswerSynced, setSubmitPending } from "../db/idb.js";
 import { STATUS_IDLE, STATUS_FINALIZING, STATUS_DONE } from "./examSessionStatus.js";
 
 const ExamSessionContext = createContext(null);
@@ -48,7 +48,13 @@ function loadPersistedSession(code) {
     ) {
       return null;
     }
-    return parsed;
+
+    return {
+      sessionId: parsed.sessionId,
+      startedAt: parsed.startedAt,
+      status: parsed.status,
+      submitPending: parsed.submitPending === true,
+    };
   } catch {
     return null;
   }
@@ -98,6 +104,7 @@ function ExamSessionProvider({ children }) {
   const statusRef = useRef(STATUS_IDLE);
   const isSyncingRef = useRef(false);
   const loadedExamCodeRef = useRef(FALLBACK_EXAM_CODE);
+  const sessionMetaRef = useRef(null);
 
   useEffect(() => {
     sessionIdRef.current = sessionMeta ? sessionMeta.sessionId : null;
@@ -105,6 +112,10 @@ function ExamSessionProvider({ children }) {
 
   useEffect(() => {
     statusRef.current = sessionMeta ? sessionMeta.status : STATUS_IDLE;
+  }, [sessionMeta]);
+
+  useEffect(() => {
+    sessionMetaRef.current = sessionMeta;
   }, [sessionMeta]);
 
   useEffect(() => {
@@ -153,36 +164,40 @@ function ExamSessionProvider({ children }) {
     loadedExamCodeRef.current = loadedExamCode;
   }, [loadedExamCode]);
 
-  const syncPendingAnswers = useCallback(async (explicitQueue) => {
+  const syncPendingAnswers = useCallback(async () => {
     if (isSyncingRef.current) return;
     if (statusRef.current !== "answering") return;
-    if (!loadedExamCodeRef.current || !sessionIdRef.current) return;
-
-    const sessionUuid = sessionIdRef.current;
-    if (!sessionUuid) return;
-
     const code = loadedExamCodeRef.current;
-    const current = explicitQueue !== undefined ? explicitQueue : loadPending(code);
-    if (current.length === 0) return;
+    const sessionUuid = sessionIdRef.current;
+    if (!code || !sessionUuid) return;
 
     isSyncingRef.current = true;
     try {
-      const toRemove = [];
-      for (const item of current) {
+      let toSync;
+      try {
+        const unsynced = await getUnsyncedAnswers(code);
+        toSync = unsynced;
+      } catch {
+        const fallback = loadPending(code);
+        toSync = fallback.map((p) => ({
+          sessionCode: code,
+          questionId: p.questionId,
+          selectedOption: p.selectedOption,
+        }));
+      }
+
+      if (toSync.length === 0) return;
+
+      for (const item of toSync) {
         try {
           await saveAnswer(sessionUuid, item.questionId, item.selectedOption);
-          toRemove.push(item.questionId);
+          try {
+            await markAnswerSynced(code, item.questionId);
+          } catch {
+
+          }
         } catch {
 
-        }
-      }
-      if (toRemove.length > 0) {
-        if (explicitQueue === undefined) {
-          setPending((prev) => {
-            const next = prev.filter((p) => !toRemove.includes(p.questionId));
-            persistPending(code, next);
-            return next;
-          });
         }
       }
     } finally {
@@ -206,10 +221,55 @@ function ExamSessionProvider({ children }) {
       if (statusRef.current === "answering") {
         doSyncRef.current?.();
       }
+      if (sessionMetaRef.current?.submitPending) {
+        submitPendingSyncRef_external.current?.();
+      }
     };
     window.addEventListener("online", handleOnline);
     return () => window.removeEventListener("online", handleOnline);
   }, []);
+
+  const submitPendingSyncRef = useRef(false);
+  const beginSubmitPendingSync = useCallback(() => {
+    if (submitPendingSyncRef.current) return;
+    if (statusRef.current !== "answering") return;
+    if (!sessionMetaRef.current?.submitPending) return;
+
+    const code = loadedExamCodeRef.current;
+    const sessionUuid = sessionIdRef.current;
+    if (!code || !sessionUuid) return;
+
+    submitPendingSyncRef.current = true;
+    (async () => {
+      try {
+        await syncPendingAnswers();
+        const unsynced = await getUnsyncedAnswers(code);
+        if (unsynced.length > 0) {
+          submitPendingSyncRef.current = false;
+          return;
+        }
+
+        await submitExam(sessionUuid);
+        setSubmitPending(code, false);
+        setSessionMeta((prev) => {
+          if (!prev) return prev;
+          const safePrev = prev.sessionId != null ? prev : { ...prev };
+          const next = { ...safePrev, submitPending: false, status: STATUS_FINALIZING };
+          persistSession(code, next);
+          return next;
+        });
+      } catch {
+
+      } finally {
+        submitPendingSyncRef.current = false;
+      }
+    })();
+  }, []);
+
+  const submitPendingSyncRef_external = useRef(beginSubmitPendingSync);
+  useEffect(() => {
+    submitPendingSyncRef_external.current = beginSubmitPendingSync;
+  }, [beginSubmitPendingSync]);
 
   const submitAnswer = useCallback(
     (questionId, optionKey) => {
@@ -222,18 +282,17 @@ function ExamSessionProvider({ children }) {
         return next;
       });
 
+      saveAnswerToDb(code, questionId, optionKey, false).catch(() => {});
+
       const item = { questionId, selectedOption: optionKey, timestamp: Date.now() };
       const currentQueue = loadPending(code);
-      const withoutCurrent = currentQueue.filter(
-        (p) => p.questionId !== questionId
-      );
+      const withoutCurrent = currentQueue.filter((p) => p.questionId !== questionId);
       const nextPending = [...withoutCurrent, item];
       persistPending(code, nextPending);
       setPending(nextPending);
-      saveAnswerToDb(code, questionId, optionKey, false).catch(() => {});
 
       if (statusRef.current === "answering") {
-        syncPendingAnswers(nextPending);
+        syncPendingAnswers();
       }
     },
     [syncPendingAnswers]
@@ -241,9 +300,19 @@ function ExamSessionProvider({ children }) {
 
   const applySession = useCallback((backendSession) => {
     const next = {
-      sessionId: backendSession.sessionUuid,
-      startedAt: backendSession.startedAt,
-      status: backendSession.status,
+      sessionId:
+        typeof backendSession.sessionUuid === "string" && backendSession.sessionUuid
+          ? backendSession.sessionUuid
+          : null,
+      startedAt:
+        typeof backendSession.startedAt === "string" && backendSession.startedAt
+          ? backendSession.startedAt
+          : new Date().toISOString(),
+      status:
+        typeof backendSession.status === "string" && backendSession.status
+          ? backendSession.status
+          : STATUS_IDLE,
+      submitPending: false,
     };
     setSessionMeta(next);
     persistSession(loadedExamCode, next);
@@ -262,7 +331,8 @@ function ExamSessionProvider({ children }) {
   const beginFinalizing = useCallback(() => {
     setSessionMeta((prev) => {
       if (!prev) return prev;
-      const next = { ...prev, status: STATUS_FINALIZING };
+      const safePrev = prev.sessionId != null ? prev : { ...prev };
+      const next = { ...safePrev, status: STATUS_FINALIZING };
       persistSession(loadedExamCode, next);
       return next;
     });
@@ -271,7 +341,8 @@ function ExamSessionProvider({ children }) {
   const markDone = useCallback(() => {
     setSessionMeta((prev) => {
       if (!prev) return prev;
-      const next = { ...prev, status: STATUS_DONE };
+      const safePrev = prev.sessionId != null ? prev : { ...prev };
+      const next = { ...safePrev, status: STATUS_DONE };
       persistSession(loadedExamCode, next);
       return next;
     });
@@ -279,11 +350,19 @@ function ExamSessionProvider({ children }) {
 
   /**
    * Orchestrates the full final submission flow:
-   * 1. Flush any remaining pending answers to the backend.
-   * 2. Call POST /api/exam-sessions/:sessionUuid/submit.
-   * 3. On success: transition to finalizing state (countdown → done).
-   * 4. On HTTP 409 (already submitted): re-throw so callers can show the conflict.
-   * 5. On any other failure: re-throw so callers can show the error.
+   *
+   * Online path:
+   *   1. Flush any remaining pending answers to the backend.
+   *   2. Call POST /api/exam-sessions/:sessionUuid/submit.
+   *   3. On success: transition to finalizing state (countdown → done).
+   *   4. On HTTP 409 (already submitted): re-throw so callers can show the conflict.
+   *
+   * Offline path:
+   *   1. Flush any remaining pending answers.
+   *   2. Attempt submitExam — fails because offline.
+   *   3. Persist submitPending: true in localStorage.
+   *   4. Do NOT call beginFinalizing() — server has not confirmed.
+   *   5. On reconnect, the online event handler picks up submitPending and retries.
    *
    * Must NOT be called while isSubmitting is true (concurrent guard).
    */
@@ -291,14 +370,27 @@ function ExamSessionProvider({ children }) {
     if (isSubmitting) return;
     if (statusRef.current !== "answering") return;
 
+    const code = loadedExamCodeRef.current;
     const sessionUuid = sessionIdRef.current;
-    if (!sessionUuid) return;
+    if (!code || !sessionUuid) return;
 
     setIsSubmitting(true);
     try {
       await syncPendingAnswers();
-      await submitExam(sessionUuid);
-      beginFinalizing();
+      try {
+        await submitExam(sessionUuid);
+        beginFinalizing();
+      } catch (submitErr) {
+        setSubmitPending(code, true);
+        setSessionMeta((prev) => {
+          if (!prev) return prev;
+          const safePrev = prev.sessionId != null ? prev : { ...prev };
+          const next = { ...safePrev, submitPending: true };
+          persistSession(code, next);
+          return next;
+        });
+        if (submitErr.status === 409) throw submitErr;
+      }
     } finally {
       setIsSubmitting(false);
     }

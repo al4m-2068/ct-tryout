@@ -1,14 +1,15 @@
 /**
  * Raw IndexedDB infrastructure for EduOS CBT.
- * Database: eduos-cbt-db  |  Version: 3
+ * Database: eduos-cbt-db  |  Version: 4
  *
  * Stores:
  *   - exams   : cached exam metadata + questions, keyed by exam code
  *   - answers : per-question answer records, keyed by flat id "${sessionCode}_${questionId}"
+ *               includes a synced flag for server-confirmation tracking
  */
 
 const DB_NAME = "eduos-cbt-db";
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 function wrap(request) {
   return new Promise((resolve, reject) => {
     request.onsuccess = () => resolve(request.result);
@@ -28,17 +29,20 @@ export async function openDB() {
 
   request.onupgradeneeded = (event) => {
     const db = event.target.result;
-
+    const oldVersion = event.oldVersion;
     if (!db.objectStoreNames.contains("exams")) {
       const store = db.createObjectStore("exams", { keyPath: "code" });
       store.createIndex("cachedAt", "cachedAt", { unique: false });
     }
 
-    if (db.objectStoreNames.contains("answers")) {
-      db.deleteObjectStore("answers");
+    if (oldVersion < 4) {
+      if (db.objectStoreNames.contains("answers")) {
+        db.deleteObjectStore("answers");
+      }
+      const answersStore = db.createObjectStore("answers", { keyPath: "id" });
+      answersStore.createIndex("sessionCode", "sessionCode", { unique: false });
+      answersStore.createIndex("synced", "synced", { unique: false });
     }
-    const answersStore = db.createObjectStore("answers", { keyPath: "id" });
-    answersStore.createIndex("sessionCode", "sessionCode", { unique: false });
   };
 
   return wrap(request);
@@ -173,4 +177,97 @@ export async function getAnswersForSession(sessionCode) {
   await tx.complete;
 
   return records.filter((r) => r.sessionCode === target);
+}
+
+/**
+ * Returns all answer records for a session that have NOT yet been synced to the server.
+ *
+ * @param {string} sessionCode - the exam/session identifier (e.g. "MTK-101")
+ * @returns {Promise<Array>}  — unsynced answer records
+ */
+export async function getUnsyncedAnswers(sessionCode) {
+  if (typeof sessionCode !== "string" || sessionCode.trim() === "") {
+    throw new Error("getUnsyncedAnswers: sessionCode must be a non-empty string");
+  }
+
+  const db = await openDB();
+  const tx = db.transaction("answers", "readonly");
+  const store = tx.objectStore("answers");
+  const index = store.index("sessionCode");
+  const target = sessionCode.trim();
+
+  const records = await wrap(index.getAll(target));
+  await tx.complete;
+
+  return records.filter((r) => r.sessionCode === target && r.synced === false);
+}
+
+/**
+ * Marks a single answer record as synced: true after confirmed server persistence.
+ * Does NOT delete the record — IndexedDB retains the answer for offline recovery.
+ *
+ * @param {string} sessionCode
+ * @param {number} questionId  — will be coerced to integer
+ */
+export async function markAnswerSynced(sessionCode, questionId) {
+  if (typeof sessionCode !== "string" || sessionCode.trim() === "") {
+    throw new Error("markAnswerSynced: sessionCode must be a non-empty string");
+  }
+  const id = Number(questionId);
+  if (!Number.isInteger(id) || id <= 0) {
+    throw new Error("markAnswerSynced: questionId must be a positive integer");
+  }
+
+  const db = await openDB();
+  const tx = db.transaction("answers", "readwrite");
+  const store = tx.objectStore("answers");
+  const recordId = `${sessionCode}_${id}`;
+
+  const record = await wrap(store.get(recordId));
+  if (!record) {
+    await tx.complete;
+    return;
+  }
+
+  record.synced = true;
+  await wrapVoid(store.put(record));
+  await wrap(tx.complete);
+}
+
+
+/**
+ * Persists a submit-pending flag alongside the session metadata in localStorage.
+ * This is a thin wrapper over the existing localStorage session model — it reads
+ * the current session object, sets submitPending, and writes it back.
+ *
+ * @param {string} code        — exam code (e.g. "MTK-101")
+ * @param {boolean} value     — true = submit intent is pending, false = clear
+ */
+export function setSubmitPending(code, value) {
+  try {
+    const raw = localStorage.getItem(`eduos.cbt.exam.${code}.session`);
+    if (raw === null) return;
+    const session = JSON.parse(raw);
+    if (!session || typeof session !== "object") return;
+    session.submitPending = value === true;
+    localStorage.setItem(`eduos.cbt.exam.${code}.session`, JSON.stringify(session));
+  } catch {}
+}
+
+/**
+ * Reads the submit-pending flag from the localStorage session object.
+ *
+ * @param {string} code — exam code (e.g. "MTK-101")
+ * @returns {boolean}
+ */
+export function getSubmitPending(code) {
+  try {
+    const raw = localStorage.getItem(`eduos.cbt.exam.${code}.session`);
+    if (raw === null) return false;
+    const session = JSON.parse(raw);
+    if (!session || typeof session !== "object") return false;
+    return session.submitPending === true;
+  } catch {
+    return false;
+  }
 }
