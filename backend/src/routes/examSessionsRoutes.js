@@ -2,7 +2,8 @@ const express = require('express');
 const router = express.Router();
 const examSessionsController = require('../controllers/examSessionsController');
 
-// POST /api/exam-sessions — start a new exam session for a student
-router.post('/', examSessionsController.createSession);
+router.post("/", examSessionsController.createSession);
+router.post("/:sessionUuid/answers", examSessionsController.saveAnswer);
+router.post("/:sessionUuid/submit", examSessionsController.submitSession);
 
 module.exports = router;

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useExamSession } from "../contexts/ExamSessionContext.jsx";
 import TimerRing from "../components/TimerRing.jsx";
@@ -14,6 +14,7 @@ function ExamPage() {
     questions,
     answers,
     status: sessionStatus,
+    startedAt,
     submitAnswer,
     beginFinalizing,
     markDone,
@@ -22,26 +23,57 @@ function ExamPage() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [countdown, setCountdown] = useState(SUBMIT_COUNTDOWN_SECONDS);
-  const question = questions[currentIndex];
-  const answeredCount = Object.keys(answers).length;
-  const isLast = currentIndex === questions.length - 1;
-  const isFirst = currentIndex === 0;
+  const [remainingSeconds, setRemainingSeconds] = useState(0);
+  const hasExpiredRef = useRef(false);
+  const intervalRef = useRef(null);
+  const deadlineMs =
+    startedAt && exam
+      ? new Date(startedAt).getTime() + exam.durationMinutes * 60 * 1000
+      : null;
+
+  useEffect(() => {
+    if (sessionStatus !== "answering" || !deadlineMs) return undefined;
+    if (!questions || questions.length === 0) return undefined;
+
+    const tick = () => {
+      if (hasExpiredRef.current) {
+        clearInterval(intervalRef.current);
+        return;
+      }
+      const remainingMs = deadlineMs - Date.now();
+      if (remainingMs <= 0) {
+        hasExpiredRef.current = true;
+        setRemainingSeconds(0);
+        clearInterval(intervalRef.current);
+        beginFinalizing();
+        return;
+      }
+      setRemainingSeconds(Math.ceil(remainingMs / 1000));
+    };
+
+    tick();
+    intervalRef.current = setInterval(tick, 1000);
+    return () => clearInterval(intervalRef.current);
+  }, [sessionStatus, deadlineMs, questions, beginFinalizing]);
 
   useEffect(() => {
     if (sessionStatus !== "finalizing") return undefined;
-
     if (countdown <= 0) {
       markDone();
       return undefined;
     }
-
     const id = setTimeout(() => setCountdown((c) => c - 1), 1000);
     return () => clearTimeout(id);
   }, [sessionStatus, countdown, markDone]);
 
-  function selectAnswer(key) {
-    submitAnswer(question.id, key);
-  }
+  const question = questions[currentIndex];
+  const answeredCount = Object.keys(answers).length;
+  const isLast = currentIndex === questions.length - 1;
+  const isFirst = currentIndex === 0;
+  const unanswered = useMemo(
+    () => questions.filter((q) => !answers[q.id]),
+    [answers, questions]
+  );
 
   function goPrev() {
     setCurrentIndex((i) => Math.max(0, i - 1));
@@ -60,11 +92,6 @@ function ExamPage() {
     setCountdown(SUBMIT_COUNTDOWN_SECONDS);
     beginFinalizing();
   }
-
-  const unanswered = useMemo(
-    () => questions.filter((q) => !answers[q.id]),
-    [answers, questions]
-  );
 
   if (!questions) {
     return (
@@ -124,8 +151,22 @@ function ExamPage() {
           <span className="exam__eyebrow">{exam.code}</span>
           <h1 className="exam__title">{exam.title}</h1>
         </div>
-        <div className="exam__progressPill">
-          Soal {currentIndex + 1} / {questions.length}
+        <div className="exam__headerRight">
+          <div className="exam__progressPill">
+            Soal {currentIndex + 1} / {questions.length}
+          </div>
+          {sessionStatus === "answering" && remainingSeconds > 0 && (
+            <div
+              className={`exam__timer${remainingSeconds <= 120 ? " exam__timer--danger" : ""}`}
+              role="timer"
+              aria-label={`Sisa waktu ${Math.floor(remainingSeconds / 60)} menit ${remainingSeconds % 60} detik`}
+            >
+              <TimerRing
+                secondsLeft={remainingSeconds}
+                danger={remainingSeconds <= 120}
+              />
+            </div>
+          )}
         </div>
       </header>
 
@@ -157,7 +198,11 @@ function ExamPage() {
       <main className="exam__card">
         <p className="exam__question">{question.text}</p>
 
-        <div className="exam__options" role="radiogroup" aria-label={question.text}>
+        <div
+          className="exam__options"
+          role="radiogroup"
+          aria-label={question.text}
+        >
           {question.options.map((opt) => {
             const selected = answers[question.id] === opt.key;
             return (
@@ -167,7 +212,7 @@ function ExamPage() {
                 role="radio"
                 aria-checked={selected}
                 className={`option${selected ? " option--selected" : ""}`}
-                onClick={() => selectAnswer(opt.key)}
+                onClick={() => submitAnswer(question.id, opt.key)}
               >
                 <span className="option__bubble">{opt.key}</span>
                 <span className="option__text">{opt.text}</span>
@@ -188,11 +233,19 @@ function ExamPage() {
         </button>
 
         {isLast ? (
-          <button type="button" className="submitBtn" onClick={requestSubmit}>
+          <button
+            type="button"
+            className="submitBtn"
+            onClick={requestSubmit}
+          >
             Submit Jawaban
           </button>
         ) : (
-          <button type="button" className="navBtn navBtn--primary" onClick={goNext}>
+          <button
+            type="button"
+            className="navBtn navBtn--primary"
+            onClick={goNext}
+          >
             Next →
           </button>
         )}
@@ -205,7 +258,7 @@ function ExamPage() {
             <p className="modal__body">
               {unanswered.length > 0
                 ? `Masih ada ${unanswered.length} soal yang belum dijawab. Jawaban yang sudah diisi tetap akan disimpan.`
-                : "Semua soal sudah kamu jawab."}
+                : "Semua soal sudah kamu dijawab."}
             </p>
             <div className="modal__actions">
               <button
@@ -215,7 +268,11 @@ function ExamPage() {
               >
                 Cek Lagi
               </button>
-              <button type="button" className="submitBtn" onClick={confirmSubmit}>
+              <button
+                type="button"
+                className="submitBtn"
+                onClick={confirmSubmit}
+              >
                 Ya, Submit
               </button>
             </div>

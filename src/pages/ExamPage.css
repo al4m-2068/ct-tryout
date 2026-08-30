@@ -47,6 +47,21 @@
   white-space: nowrap;
 }
 
+.exam__headerRight {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.exam__timer {
+  display: flex;
+  align-items: center;
+}
+
+.exam__timer--danger .timerRing__label {
+  color: var(--danger);
+}
+
 .exam__dots {
   display: flex;
   flex-wrap: wrap;

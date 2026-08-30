@@ -17,7 +17,7 @@ const getExamByCode = async (req, res) => {
 
     const examData = exams[0];
     const [questionsData] = await db.query(
-      'SELECT id, question_text, options FROM questions WHERE exam_id = ?',
+      'SELECT id, question_text, options FROM questions WHERE exam_id = ? ORDER BY id ASC',
       [examData.id]
     );
 
