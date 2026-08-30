@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { getExam, createSession, saveAnswer, submitExam } from "../services/examService.js";
+import { cacheExam, getCachedExam, saveAnswerToDb } from "../db/idb.js";
 import { STATUS_IDLE, STATUS_FINALIZING, STATUS_DONE } from "./examSessionStatus.js";
 
 const ExamSessionContext = createContext(null);
@@ -92,6 +93,7 @@ function ExamSessionProvider({ children }) {
   const [sessionMeta, setSessionMeta] = useState(() => loadPersistedSession(loadedExamCode));
   const [pending, setPending] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [examLoadError, setExamLoadError] = useState(false);
   const sessionIdRef = useRef(null);
   const statusRef = useRef(STATUS_IDLE);
   const isSyncingRef = useRef(false);
@@ -107,14 +109,35 @@ function ExamSessionProvider({ children }) {
 
   useEffect(() => {
     let cancelled = false;
+
     getExam(FALLBACK_EXAM_CODE)
       .then(({ exam: loadedExam, questions: loadedQuestions }) => {
         if (cancelled) return;
         setExam(loadedExam);
         setQuestions(loadedQuestions);
         setLoadedExamCode(loadedExam.code);
+        setExamLoadError(false);
+        cacheExam({ exam: loadedExam, questions: loadedQuestions }).catch(() => {});
       })
-      .catch(() => {});
+      .catch(async () => {
+        if (cancelled) return;
+        try {
+          const cached = await getCachedExam(FALLBACK_EXAM_CODE);
+          if (!cancelled) {
+            if (cached && cached.exam && Array.isArray(cached.questions)) {
+              setExam(cached.exam);
+              setQuestions(cached.questions);
+              setLoadedExamCode(cached.exam.code);
+              setExamLoadError(false);
+            } else {
+              setExamLoadError(true);
+            }
+          }
+        } catch {
+          if (!cancelled) setExamLoadError(true);
+        }
+      });
+
     return () => { cancelled = true; };
   }, []);
 
@@ -207,6 +230,7 @@ function ExamSessionProvider({ children }) {
       const nextPending = [...withoutCurrent, item];
       persistPending(code, nextPending);
       setPending(nextPending);
+      saveAnswerToDb(code, questionId, optionKey, false).catch(() => {});
 
       if (statusRef.current === "answering") {
         syncPendingAnswers(nextPending);
@@ -294,8 +318,9 @@ function ExamSessionProvider({ children }) {
       beginFinalizing,
       markDone,
       pendingCount: pending.length,
+      examLoadError,
     }),
-    [exam, questionsList, answers, sessionMeta, status, submitAnswer, finaliseExam, isSubmitting, startSession, beginFinalizing, markDone, pending]
+    [exam, questionsList, answers, sessionMeta, status, submitAnswer, finaliseExam, isSubmitting, startSession, beginFinalizing, markDone, pending, examLoadError]
   );
 
   return (

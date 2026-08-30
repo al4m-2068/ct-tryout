@@ -20,8 +20,8 @@ function ExamPage() {
     isSubmitting,
     beginFinalizing,
     markDone,
+    examLoadError,
   } = useExamSession();
-
   const [currentIndex, setCurrentIndex] = useState(0);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [countdown, setCountdown] = useState(SUBMIT_COUNTDOWN_SECONDS);
@@ -104,6 +104,16 @@ function ExamPage() {
   }
 
   if (!questions) {
+    if (examLoadError) {
+      return (
+        <div className="exam exam--center">
+          <p style={{ padding: "2rem", textAlign: "center", color: "#c0392b" }}>
+            Gagal memuat soal ujian.<br />
+            Pastikan koneksi internet stabil dan buka ulang halaman ini.
+          </p>
+        </div>
+      );
+    }
     return (
       <div className="exam exam--center">
         <p style={{ padding: "2rem", textAlign: "center" }}>
