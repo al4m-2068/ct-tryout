@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { getExam, createSession, saveAnswer, submitExam } from "../services/examService.js";
-import { cacheExam, getCachedExam, saveAnswerToDb, getUnsyncedAnswers, markAnswerSynced, setSubmitPending } from "../db/idb.js";
+import { cacheExam, getCachedExam, saveAnswerToDb, getUnsyncedAnswers, markAnswerSynced, setSubmitPending, getAnswersForSession, getSubmitPending } from "../db/idb.js";
 import { STATUS_IDLE, STATUS_FINALIZING, STATUS_DONE } from "./examSessionStatus.js";
 
 const ExamSessionContext = createContext(null);
@@ -103,6 +103,7 @@ function ExamSessionProvider({ children }) {
   const sessionIdRef = useRef(null);
   const statusRef = useRef(STATUS_IDLE);
   const isSyncingRef = useRef(false);
+  const syncingPromiseRef = useRef(null);
   const loadedExamCodeRef = useRef(FALLBACK_EXAM_CODE);
   const sessionMetaRef = useRef(null);
 
@@ -165,45 +166,132 @@ function ExamSessionProvider({ children }) {
   }, [loadedExamCode]);
 
   const syncPendingAnswers = useCallback(async () => {
-    if (isSyncingRef.current) return;
-    if (statusRef.current !== "answering") return;
+    console.log("[CBT FORENSIC][SYNC START]", {
+      code: loadedExamCodeRef.current,
+      sessionUuidPresent: !!sessionIdRef.current,
+      online: navigator.onLine,
+    });
+
+    if (isSyncingRef.current && syncingPromiseRef.current) {
+      console.log("[CBT FORENSIC][SYNC GUARD] sync already in-flight — returning shared promise");
+      return syncingPromiseRef.current;
+    }
+    if (isSyncingRef.current) {
+      console.log("[CBT FORENSIC][SYNC GUARD] isSyncingRef was true — returning false");
+      return Promise.resolve(false);
+    }
+    if (statusRef.current !== "answering") {
+      console.log("[CBT FORENSIC][SYNC GUARD] status !== 'answering' — returning false");
+      return false;
+    }
     const code = loadedExamCodeRef.current;
     const sessionUuid = sessionIdRef.current;
-    if (!code || !sessionUuid) return;
+    if (!code || !sessionUuid) {
+      console.log("[CBT FORENSIC][SYNC GUARD] missing code or sessionUuid — returning false", { code, sessionUuid });
+      return false;
+    }
 
     isSyncingRef.current = true;
-    try {
-      let toSync;
+
+    const syncPromise = (async () => {
       try {
-        const unsynced = await getUnsyncedAnswers(code);
-        toSync = unsynced;
-      } catch {
-        const fallback = loadPending(code);
-        toSync = fallback.map((p) => ({
-          sessionCode: code,
-          questionId: p.questionId,
-          selectedOption: p.selectedOption,
-        }));
-      }
 
-      if (toSync.length === 0) return;
+    let idbReadFailed = false;
+    let idbReadError = null;
+    let toSync;
 
-      for (const item of toSync) {
-        try {
-          await saveAnswer(sessionUuid, item.questionId, item.selectedOption);
-          try {
-            await markAnswerSynced(code, item.questionId);
-          } catch {
-
-          }
-        } catch {
-
-        }
-      }
-    } finally {
-      isSyncingRef.current = false;
+    try {
+      const unsynced = await getUnsyncedAnswers(code);
+      toSync = unsynced;
+      console.log("[CBT FORENSIC][SYNC SOURCE] IndexedDB", {
+        source: "IndexedDB",
+        count: unsynced.length,
+        questionIds: unsynced.map((u) => u.questionId),
+      });
+    } catch (idbErr) {
+      idbReadFailed = true;
+      idbReadError = idbErr;
+      const fallback = loadPending(code);
+      toSync = fallback.map((p) => ({
+        sessionCode: code,
+        questionId: p.questionId,
+        selectedOption: p.selectedOption,
+      }));
+      console.log("[CBT FORENSIC][SYNC SOURCE] IndexedDB read failed — using localStorage fallback", {
+        source: "localStorage",
+        fallbackCount: toSync.length,
+        fallbackQuestionIds: toSync.map((f) => f.questionId),
+        idbError: idbErr,
+      });
     }
-  }, []);
+
+    if (toSync.length === 0) {
+      console.log("[CBT FORENSIC][SYNC QUEUE EMPTY] — returning true");
+      return true;
+    }
+
+    let hasErrors = false;
+    let saveAnswerCount = 0;
+    let markAnswerSyncedCount = 0;
+    const attemptedIds = toSync.map((i) => i.questionId);
+
+    for (const item of toSync) {
+      console.log("[CBT FORENSIC][LOOP ITEM ENTER]", { questionId: item.questionId, selectedOption: item.selectedOption });
+
+      let saveAnswerSucceeded = false;
+
+      try {
+        console.log("[CBT FORENSIC][SAVE ANSWER START]", { questionId: item.questionId });
+        await saveAnswer(sessionUuid, item.questionId, item.selectedOption);
+        saveAnswerSucceeded = true;
+        saveAnswerCount++;
+
+        console.log("[CBT FORENSIC][SAVE ANSWER SUCCESS]", { questionId: item.questionId });
+      } catch (saveErr) {
+        console.log("[CBT FORENSIC][SAVE ANSWER ERROR]", {
+          questionId: item.questionId,
+          error: saveErr,
+          saveAnswerSucceeded: false,
+        });
+        hasErrors = true;
+
+      }
+
+      try {
+        console.log("[CBT FORENSIC][MARK ANSWER SYNCED START]", { questionId: item.questionId, saveAnswerSucceeded });
+        await markAnswerSynced(code, item.questionId);
+        markAnswerSyncedCount++;
+        console.log("[CBT FORENSIC][MARK ANSWER SYNCED SUCCESS]", { questionId: item.questionId });
+      } catch (markErr) {
+        console.log("[CBT FORENSIC][MARK ANSWER SYNCED ERROR]", {
+          questionId: item.questionId,
+          error: markErr,
+          saveAnswerSucceededBeforeThisError: saveAnswerSucceeded,
+        });
+        hasErrors = true;
+      }
+    }
+
+    console.log("[CBT FORENSIC][SYNC LOOP COMPLETE]", {
+      hasErrors,
+      attemptedQuestionIds: attemptedIds,
+      attemptedCount: attemptedIds.length,
+      saveAnswerSuccessCount: saveAnswerCount,
+      markAnswerSyncedSuccessCount: markAnswerSyncedCount,
+      idbReadFailed,
+      idbReadError,
+    });
+
+    console.log("[CBT FORENSIC][SYNC RESULT]", { hasErrors, returning: !hasErrors });
+    return !hasErrors;
+      } finally {
+        isSyncingRef.current = false;
+      }
+    });
+
+    syncingPromiseRef.current = syncPromise;
+    return syncPromise;
+}, []);
 
   const doSyncRef = useRef(null);
   useEffect(() => {
@@ -218,38 +306,107 @@ function ExamSessionProvider({ children }) {
 
   useEffect(() => {
     const handleOnline = () => {
+      console.log("[CBT FORENSIC][ONLINE]", {
+        online: navigator.onLine,
+        status: statusRef.current,
+        sessionMeta: sessionMetaRef.current,
+        submitPendingLock: submitPendingSyncRef.current,
+      });
+
       if (statusRef.current === "answering") {
         doSyncRef.current?.();
       }
-      if (sessionMetaRef.current?.submitPending) {
-        submitPendingSyncRef_external.current?.();
-      }
+      resumePendingSyncRef.current?.();
     };
     window.addEventListener("online", handleOnline);
     return () => window.removeEventListener("online", handleOnline);
   }, []);
 
   const submitPendingSyncRef = useRef(false);
-  const beginSubmitPendingSync = useCallback(() => {
-    if (submitPendingSyncRef.current) return;
-    if (statusRef.current !== "answering") return;
-    if (!sessionMetaRef.current?.submitPending) return;
+  const resumePendingSyncRef = useRef(null);
+
+  const resumePendingSync = useCallback(() => {
+    console.log("[CBT FORENSIC][RESUME ENTER]", {
+      online: navigator.onLine,
+      status: statusRef.current,
+      sessionMeta: sessionMetaRef.current,
+      submitPendingLock: submitPendingSyncRef.current,
+    });
+
+    if (submitPendingSyncRef.current) {
+      console.log("[CBT FORENSIC][GUARD] submitPendingSyncRef was already true — early return");
+      return;
+    }
+    if (statusRef.current !== "answering") {
+      console.log("[CBT FORENSIC][GUARD] statusRef !== 'answering' — early return");
+      return;
+    }
+    if (!navigator.onLine) {
+      console.log("[CBT FORENSIC][GUARD] navigator.onLine === false — early return");
+      return;
+    }
 
     const code = loadedExamCodeRef.current;
     const sessionUuid = sessionIdRef.current;
-    if (!code || !sessionUuid) return;
+    if (!code || !sessionUuid) {
+      console.log("[CBT FORENSIC][GUARD] missing code or sessionUuid — early return", { code, sessionUuid });
+      return;
+    }
 
     submitPendingSyncRef.current = true;
+    console.log("[CBT FORENSIC][LOCK ACQUIRED]", { submitPendingLock: submitPendingSyncRef.current });
+
     (async () => {
       try {
-        await syncPendingAnswers();
-        const unsynced = await getUnsyncedAnswers(code);
-        if (unsynced.length > 0) {
+        const allSynced = await syncPendingAnswers();
+        console.log("[CBT FORENSIC][SYNC RESULT]", {
+          allSynced,
+          online: navigator.onLine,
+          status: statusRef.current,
+          sessionMeta: sessionMetaRef.current,
+          submitPendingLock: submitPendingSyncRef.current,
+        });
+
+        console.log("[CBT FORENSIC][META AFTER SYNC]", sessionMetaRef.current);
+
+        if (!allSynced) {
+          console.log("[CBT FORENSIC][SUBMIT DECISION]", {
+            reason: "allSynced === false",
+            allSynced,
+            submitPending: sessionMetaRef.current?.submitPending,
+            online: navigator.onLine,
+            status: statusRef.current,
+          });
+          console.log("[CBT FORENSIC][LOCK RELEASED][!allSynced]", { submitPendingLock: submitPendingSyncRef.current });
           submitPendingSyncRef.current = false;
           return;
         }
 
+        if (!sessionMetaRef.current?.submitPending) {
+          console.log("[CBT FORENSIC][SUBMIT DECISION]", {
+            reason: "no submitPending intent",
+            allSynced,
+            submitPending: sessionMetaRef.current?.submitPending,
+            online: navigator.onLine,
+            status: statusRef.current,
+          });
+          console.log("[CBT FORENSIC][LOCK RELEASED][no-submit-intent]", { submitPendingLock: submitPendingSyncRef.current });
+          submitPendingSyncRef.current = false;
+          return;
+        }
+
+        console.log("[CBT FORENSIC][SUBMIT DECISION]", {
+          reason: "all conditions met — entering submit branch",
+          allSynced,
+          submitPending: sessionMetaRef.current?.submitPending,
+          online: navigator.onLine,
+          status: statusRef.current,
+        });
+        console.log("[CBT FORENSIC][SUBMIT BRANCH ENTERED]");
+        console.log("[CBT FORENSIC][SUBMIT REQUEST START]", { sessionUuid, code });
         await submitExam(sessionUuid);
+        console.log("[CBT FORENSIC][SUBMIT REQUEST SUCCESS]", { sessionUuid, code });
+
         setSubmitPending(code, false);
         setSessionMeta((prev) => {
           if (!prev) return prev;
@@ -258,18 +415,38 @@ function ExamSessionProvider({ children }) {
           persistSession(code, next);
           return next;
         });
-      } catch {
-
+      } catch (err) {
+        console.log("[CBT FORENSIC][SUBMIT REQUEST ERROR]", {
+          sessionUuid,
+          code,
+          error: err,
+        });
       } finally {
+        console.log("[CBT FORENSIC][LOCK RELEASED]", { submitPendingLock: submitPendingSyncRef.current });
         submitPendingSyncRef.current = false;
       }
     })();
   }, []);
 
-  const submitPendingSyncRef_external = useRef(beginSubmitPendingSync);
   useEffect(() => {
-    submitPendingSyncRef_external.current = beginSubmitPendingSync;
-  }, [beginSubmitPendingSync]);
+    resumePendingSyncRef.current = resumePendingSync;
+  }, [resumePendingSync]);
+
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      console.log("[CBT FORENSIC][ONLINE][STARTUP]", {
+        online: navigator.onLine,
+        status: statusRef.current,
+        sessionMeta: sessionMetaRef.current,
+        submitPendingLock: submitPendingSyncRef.current,
+      });
+
+      if (statusRef.current === "answering" && sessionMetaRef.current?.submitPending) {
+        resumePendingSyncRef.current?.();
+      }
+    }, 0);
+    return () => clearTimeout(handle);
+  }, []);
 
   const submitAnswer = useCallback(
     (questionId, optionKey) => {
@@ -348,25 +525,7 @@ function ExamSessionProvider({ children }) {
     });
   }, [loadedExamCode]);
 
-  /**
-   * Orchestrates the full final submission flow:
-   *
-   * Online path:
-   *   1. Flush any remaining pending answers to the backend.
-   *   2. Call POST /api/exam-sessions/:sessionUuid/submit.
-   *   3. On success: transition to finalizing state (countdown → done).
-   *   4. On HTTP 409 (already submitted): re-throw so callers can show the conflict.
-   *
-   * Offline path:
-   *   1. Flush any remaining pending answers.
-   *   2. Attempt submitExam — fails because offline.
-   *   3. Persist submitPending: true in localStorage.
-   *   4. Do NOT call beginFinalizing() — server has not confirmed.
-   *   5. On reconnect, the online event handler picks up submitPending and retries.
-   *
-   * Must NOT be called while isSubmitting is true (concurrent guard).
-   */
-  const finaliseExam = useCallback(async () => {
+const finaliseExam = useCallback(async () => {
     if (isSubmitting) return;
     if (statusRef.current !== "answering") return;
 

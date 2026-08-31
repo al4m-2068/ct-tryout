@@ -71,7 +71,6 @@ function ExamPage() {
 
   const question = questions?.[currentIndex];
   const answeredCount = Object.keys(answers).length;
-  const isLast = currentIndex === (questions?.length ?? 0) - 1;
   const isFirst = currentIndex === 0;
   const unanswered = useMemo(
     () => (questions ?? []).filter((q) => !answers[q.id]),
@@ -80,10 +79,6 @@ function ExamPage() {
 
   function goPrev() {
     setCurrentIndex((i) => Math.max(0, i - 1));
-  }
-
-  function goNext() {
-    setCurrentIndex((i) => Math.min(questions.length - 1, i + 1));
   }
 
   function requestSubmit() {
@@ -270,29 +265,19 @@ function ExamPage() {
           ← Prev
         </button>
 
-        {isLast ? (
-          <button
-            type="button"
-            className="submitBtn"
-            onClick={requestSubmit}
-          >
-            Submit Jawaban
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="navBtn navBtn--primary"
-            onClick={goNext}
-          >
-            Next →
-          </button>
-        )}
+        <button
+          type="button"
+          className="submitBtn"
+          onClick={requestSubmit}
+        >
+          Selesai Ujian
+        </button>
       </footer>
 
       {confirmOpen && (
         <div className="modalOverlay" role="dialog" aria-modal="true">
           <div className="modal">
-            <h2 className="modal__title">Yakin mau submit?</h2>
+            <h2 className="modal__title">Yakin ingin menyelesaikan ujian?</h2>
             <p className="modal__body">
               {unanswered.length > 0
                 ? `Masih ada ${unanswered.length} soal yang belum dijawab. Jawaban yang sudah diisi tetap akan disimpan.`
@@ -313,7 +298,7 @@ function ExamPage() {
                 onClick={confirmSubmit}
                 disabled={isSubmitting}
               >
-                {isSubmitting ? "Menyimpan..." : "Ya, Submit"}
+                {isSubmitting ? "Menyimpan..." : "Ya, Selesaikan"}
               </button>
             </div>
           </div>

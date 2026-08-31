@@ -79,3 +79,21 @@ export async function createSession({ studentId, examCode, sessionUuid }) {
   const raw = await res.json();
   return raw.data || raw;
 }
+
+export async function submitExam(sessionUuid) {
+  const res = await fetch(
+    `${API_BASE}/exam-sessions/${encodeURIComponent(sessionUuid)}/submit`,
+    { method: "POST" }
+  );
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`;
+    try {
+      const body = await res.json();
+      if (body && body.message) message = body.message;
+    } catch {}
+    const err = Object.assign(new Error(message), { status: res.status });
+    if (res.status === 409) err.conflict = true;
+    throw err;
+  }
+  return res.json();
+}
